@@ -1,0 +1,125 @@
+================================================================================
+          CRM SALES MANAGEMENT SYSTEM - AUTHENTICATION & ROLES GUIDE
+================================================================================
+
+1. AUTHENTICATION ARCHITECTURE
+--------------------------------------------------------------------------------
+The backend uses a secure dual-token authentication system:
+
+- Access Token: Short-lived JSON Web Token (JWT) sent by the client in the 
+  HTTP header (`Authorization: Bearer <token>`). It contains user ID and role.
+- Refresh Token: Long-lived JWT stored in a secure, `httpOnly` HTTP cookie 
+  (`refreshToken`). It prevents XSS attacks and allows silent session renewal.
+- Password Hashing: Passwords are encrypted using `bcryptjs` with 10 salt rounds 
+  before saving to the database.
+
+Auth Endpoints:
+  POST  /api/auth/register    - Create new user (Role defaults to sales_executive)
+  POST  /api/auth/login       - Validate credentials, return accessToken & set cookie
+  POST  /api/auth/refresh     - Verify refresh cookie and issue new accessToken
+  POST  /api/auth/logout      - Clear refresh cookie and invalidate session
+  GET   /api/auth/me          - Retrieve currently authenticated user profile
+
+
+2. USER ROLES & HIERARCHY
+--------------------------------------------------------------------------------
+The system supports 3 distinct user roles with hierarchical reporting links:
+
+1. ADMIN (`admin`)
+   - Highest privilege level in the system.
+   - Has global visibility across all users, leads, customers, deals, activities,
+     and analytics regardless of assignment.
+
+2. SALES MANAGER (`sales_manager`)
+   - Team manager responsible for overseeing a group of Sales Executives.
+   - Sales Executives report to a manager via the `managerId` field.
+   - Has team-level visibility: can view and manage leads, deals, and activities 
+     assigned to themselves OR any executive on their team.
+   - Has access to Team Performance Analytics.
+
+3. SALES EXECUTIVE (`sales_executive`)
+   - Frontline sales representative.
+   - Has self-level visibility: can only view and manage leads, customers, deals, 
+     and activities specifically assigned to them.
+   - Restricted from viewing team-wide analytics or other reps' deals.
+
+
+3. ROLE-BASED ACCESS CONTROL (RBAC) & PERMISSIONS MATRIX
+--------------------------------------------------------------------------------
+
++-----------------------+---------------------+---------------------+---------------------+
+| Resource / Action     | ADMIN               | SALES MANAGER       | SALES EXECUTIVE     |
++-----------------------+---------------------+---------------------+---------------------+
+| Auth: Register/Login  | Yes                 | Yes                 | Yes                 |
+| Auth: View Profile    | Yes                 | Yes                 | Yes                 |
+|                       |                     |                     |                     |
+| Leads: View List      | All Leads           | Team + Own Leads    | Own Leads Only      |
+| Leads: Create         | Yes                 | Yes                 | Yes                 |
+| Leads: Update         | Any Lead            | Team + Own Leads    | Own Leads Only      |
+| Leads: Reassign       | To Any User         | To Team Member      | No                  |
+| Leads: Convert        | Any Qualified Lead  | Team + Own Lead     | Own Lead Only       |
+|                       |                     |                     |                     |
+| Customers: View List  | All Customers       | Team + Own Cust.    | Own Cust. Only      |
+| Customers: View Detail| All Customers       | Team + Own Cust.    | Own Cust. Only      |
+|                       |                     |                     |                     |
+| Deals: View Pipeline  | All Deals           | Team + Own Deals    | Own Deals Only      |
+| Deals: Create         | Any Customer        | Team + Own Cust.    | Own Cust. Only      |
+| Deals: Update Stage   | Any Open Deal       | Team + Own Open Deal| Own Open Deal Only  |
+| Deals: Modify Closed  | No (Enforced)       | No (Enforced)       | No (Enforced)       |
+|                       |                     |                     |                     |
+| Activities: List      | All Activities      | Team + Own Act.     | Own Act. Only       |
+| Activities: Create    | Any Entity          | Team + Own Entity   | Own Entity Only     |
+| Activities: Complete  | Any Activity        | Team + Own Act.     | Own Act. Only       |
+|                       |                     |                     |                     |
+| Notifications: List   | Own Notifications   | Own Notifications   | Own Notifications   |
+| Notifications: MarkRead| Own Notifications  | Own Notifications   | Own Notifications   |
+|                       |                     |                     |                     |
+| Dashboard: Summary    | Global System KPIs  | Team + Personal KPIs| Personal KPIs Only  |
+| Dashboard: Team Perf. | Yes (All Users)     | Yes (Team Members)  | NO (403 Forbidden)  |
+|                       |                     |                     |                     |
+| Users: View Directory | All Active Users    | Team Members + Self | Self Only           |
+| Users: View Profile   | Any User            | Team Member + Self  | Self Only           |
++-----------------------+---------------------+---------------------+---------------------+
+
+
+4. SEEDED TEST USERS & CREDENTIALS
+--------------------------------------------------------------------------------
+You can use these pre-configured user accounts for testing RBAC and scoping:
+
+- ADMIN USER
+  Email:    admin@crm.com
+  Password: Admin@12345
+  Role:     admin
+
+- SALES MANAGER USER (Manager Bob)
+  Email:    manager1@crm.com
+  Password: Manager@12345
+  Role:     sales_manager
+
+- SALES EXECUTIVE 1 (Executive Alice - Reports to Manager Bob)
+  Email:    exec1@crm.com
+  Password: Exec@12345
+  Role:     sales_executive
+
+- SALES EXECUTIVE 2 (Executive Charlie - Reports to Manager Bob)
+  Email:    exec2@crm.com
+  Password: Exec@12345
+  Role:     sales_executive
+
+
+5. KEY BUSINESS & SECURITY RULES
+--------------------------------------------------------------------------------
+- Ownership Scoping: Enforced automatically at the database level via 
+  `scopeQuery.js` (`getVisibleUserIds`). Queries dynamically restrict database 
+  results based on the requesting user's role and ID.
+- Pipeline Stage Rules: Deals follow strict stage ordering:
+  qualification -> discovery -> proposal -> negotiation -> won / lost.
+- Closed Deal Immutability: Once a deal reaches 'won' or 'lost', stage or field 
+  edits are rejected with HTTP 400.
+- Lost Reason Requirement: Marking a deal as 'lost' strictly requires providing a 
+  `lostReason` string.
+- Activity Overdue Tracking: The `isOverdue` field on activities is dynamically 
+  computed (`status === 'pending' && dueDate < now`) to guarantee fresh data.
+- Automated Reminders: Background cron job runs every 15 minutes to notify users 
+  of upcoming (due in <24h) and overdue activities.
+================================================================================
