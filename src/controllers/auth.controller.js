@@ -3,10 +3,12 @@ const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const env = require('../config/env');
 
+const isProduction = env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  secure: isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
 };
 
@@ -30,19 +32,29 @@ const login = asyncHandler(async (req, res) => {
 
   return ApiResponse.success(res, 200, 'Login successful', {
     accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
     user: result.user
   });
 });
 
 /**
- * Refresh Access Token using Refresh Cookie
+ * Refresh Access Token using Refresh Cookie (or body/header fallback)
  */
 const refresh = asyncHandler(async (req, res) => {
-  const refreshToken = req.cookies?.refreshToken;
+  const refreshToken =
+    req.cookies?.refreshToken ||
+    req.body?.refreshToken ||
+    req.headers['x-refresh-token'];
+
   const result = await AuthService.refreshAccessToken(refreshToken);
+
+  if (result.refreshToken) {
+    res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
+  }
 
   return ApiResponse.success(res, 200, 'Access token refreshed successfully', {
     accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
     user: result.user
   });
 });

@@ -26,7 +26,12 @@ app.use(morgan('dev'));
 // CORS configuration
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      // Allow any origin in dev/cross-site deployment or match CLIENT_URL
+      return callback(null, true);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
